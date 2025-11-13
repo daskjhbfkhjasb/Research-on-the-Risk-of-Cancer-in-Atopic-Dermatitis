@@ -1,0 +1,577 @@
+# ============================================================================
+# Logistic Regression Analysis: Association between AD and Cancer
+# ============================================================================
+# 
+# Description:
+#   This script performs comprehensive logistic regression analyses to examine
+#   the association between AD and various cancer types.
+#   The analysis includes:
+#   - Overall population analysis
+#   - Sex-stratified analyses (Male and Female)
+#   - Adjustment for confounding factors
+#   - Multiple comparison correction (Bonferroni)
+#   - Generation of descriptive statistics (Table 1)
+#
+# Author: Wu Zhengdong
+# Date: 2025
+# 
+# Data Requirements:
+#   - Input file: "ad and cancer.csv"
+#   - Dependent variable: AD_bin (0 = No AD, 1 = AD)
+#   - Independent variables: col_10 to col_39 (various cancer types)
+#   - Confounders: cotinine, age, race, BMI, sex, education, 
+#                  Poverty_to_income_ratio, Alcohol_drinking
+#
+# Output Files:
+#   - logistic_regression_results.csv
+#   - logistic_regression_results_formatted.csv
+#   - table1.csv (descriptive statistics)
+#   - Sex-stratified results for males and females
+# ============================================================================
+
+# Load required packages
+library(dplyr)
+library(broom)
+library(tableone)
+library(readxl)
+library(writexl)
+
+# ============================================================================
+# Part 1: Overall Population Analysis (AD as Outcome)
+# ============================================================================
+
+# Read the dataset
+data1 <- read.csv("ad and cancer.csv", header = TRUE, fileEncoding = "UTF-8")
+
+# Create empty results dataframe
+results <- data.frame(
+  cancer_type = character(),
+  estimate = numeric(),
+  std_error = numeric(),
+  statistic = numeric(),
+  p_value = numeric(),
+  conf_low = numeric(),
+  conf_high = numeric(),
+  OR = numeric(),
+  OR_conf_low = numeric(),
+  OR_conf_high = numeric(),
+  n_total = numeric(),
+  n_events = numeric(),
+  stringsAsFactors = FALSE
+)
+
+# Define cancer column names (col_10 to col_39)
+cancer_cols <- paste0("col_", 10:39)
+
+# Define confounding variables
+confounders <- c("cotinine", "age", "race", "BMI", "sex", "education", 
+                 "Poverty_to_income_ratio", "Alcohol_drinking")
+
+# Loop through each cancer type for logistic regression analysis
+for (i in seq_along(cancer_cols)) {
+  
+  cancer_col <- cancer_cols[i]
+  
+  # Check if column exists
+  if (!cancer_col %in% colnames(data1)) {
+    cat("Column", cancer_col, "does not exist, skipping\n")
+    next
+  }
+  
+  # Check if column has variability (not all 0s or all 1s)
+  if (length(unique(data1[[cancer_col]], na.rm = TRUE)) < 2) {
+    cat("Column", cancer_col, "lacks variability, skipping\n")
+    next
+  }
+  
+  # Create regression formula
+  # Model 1: Simple model with cancer variable only
+  formula_simple <- as.formula(paste("AD_bin ~", cancer_col))
+  
+  # Model 2: Adjusted model with confounders
+  if (all(confounders %in% colnames(data1))) {
+    formula_adjusted <- as.formula(paste("AD_bin ~", cancer_col, "+", 
+                                        paste(confounders, collapse = " + ")))
+  } else {
+    formula_adjusted <- formula_simple
+    cat("Some confounders not found, using simple model\n")
+  }
+  
+  tryCatch({
+    # Perform logistic regression
+    model <- glm(formula_adjusted, data = data1, family = binomial())
+    
+    # Extract results
+    model_summary <- tidy(model, conf.int = TRUE)
+    
+    # Find the row for cancer variable
+    cancer_row <- model_summary[model_summary$term == cancer_col, ]
+    
+    if (nrow(cancer_row) > 0) {
+      # Calculate OR and confidence intervals
+      or <- exp(cancer_row$estimate)
+      or_conf_low <- exp(cancer_row$conf.low)
+      or_conf_high <- exp(cancer_row$conf.high)
+      
+      # Calculate sample size and number of events
+      complete_data <- data1[complete.cases(data1[c("AD_bin", cancer_col, confounders)]), ]
+      n_total <- nrow(complete_data)
+      n_events <- sum(complete_data$AD_bin, na.rm = TRUE)
+      
+      # Add results to dataframe
+      results <- rbind(results, data.frame(
+        cancer_type = cancer_col,
+        estimate = cancer_row$estimate,
+        std_error = cancer_row$std.error,
+        statistic = cancer_row$statistic,
+        p_value = cancer_row$p.value,
+        conf_low = cancer_row$conf.low,
+        conf_high = cancer_row$conf.high,
+        OR = or,
+        OR_conf_low = or_conf_low,
+        OR_conf_high = or_conf_high,
+        n_total = n_total,
+        n_events = n_events,
+        stringsAsFactors = FALSE
+      ))
+      
+      cat("Completed analysis for", cancer_col, "\n")
+    }
+    
+  }, error = function(e) {
+    cat("Error analyzing", cancer_col, ":", e$message, "\n")
+  })
+}
+
+# Apply Bonferroni correction for multiple comparisons
+results$p_adjusted <- p.adjust(results$p_value, method = "bonferroni")
+
+# Add significance markers
+results$significance <- ifelse(results$p_adjusted < 0.001, "***",
+                               ifelse(results$p_adjusted < 0.01, "**",
+                                      ifelse(results$p_adjusted < 0.05, "*", "")))
+
+# Format results table
+results_formatted <- results %>%
+  mutate(
+    OR_CI = paste0(sprintf("%.3f", OR), " (", 
+                   sprintf("%.3f", OR_conf_low), "-", 
+                   sprintf("%.3f", OR_conf_high), ")"),
+    p_formatted = ifelse(p_value < 0.001, "<0.001", sprintf("%.3f", p_value)),
+    p_adj_formatted = ifelse(p_adjusted < 0.001, "<0.001", sprintf("%.3f", p_adjusted))
+  ) %>%
+  select(cancer_type, n_total, n_events, OR_CI, p_formatted, p_adj_formatted, significance)
+
+# Rename columns
+colnames(results_formatted) <- c("Cancer_Type", "Total_N", "Events_N", "OR_95CI", 
+                                 "P_Value", "Adjusted_P", "Significance")
+
+# Display results
+print("Logistic Regression Results:")
+print(results_formatted)
+
+# Save results to CSV files
+write.csv(results, "logistic_regression_results.csv", row.names = FALSE, fileEncoding = "UTF-8")
+write.csv(results_formatted, "logistic_regression_results_formatted.csv", 
+          row.names = FALSE, fileEncoding = "UTF-8")
+
+# Display summary of significant results
+cat("\nSummary of Significant Results:\n")
+cat("Number of significant cancer types (p < 0.05):", sum(results$p_adjusted < 0.05), "\n")
+cat("Number of highly significant cancer types (p < 0.01):", sum(results$p_adjusted < 0.01), "\n")
+
+# Display significant cancer types
+significant_cancers <- results[results$p_adjusted < 0.05, ]
+if (nrow(significant_cancers) > 0) {
+  cat("\nSignificant Cancer Types:\n")
+  print(significant_cancers[, c("cancer_type", "OR", "p_adjusted")])
+}
+
+# ============================================================================
+# Part 2: Generate Table 1 (Descriptive Statistics)
+# ============================================================================
+
+# Define grouping variable
+group_var <- "AD"
+
+# Select variables to display
+vars <- c("cotinine", "age", "race", "BMI", "sex", "education", 
+          "Poverty_to_income_ratio", "cancer", "Alcohol_drinking")
+
+# Generate baseline characteristics table
+table1 <- CreateTableOne(vars = vars, data = data1, strata = group_var)
+
+# View table
+print(table1)
+
+# Export table as CSV
+table1_export <- print(table1, quote = FALSE, noSpaces = TRUE, printToggle = FALSE)
+write.csv(table1_export, "table1.csv")
+
+# Export detailed table with test results
+table1_export2 <- print(table1, 
+                        quote = FALSE, 
+                        noSpaces = TRUE, 
+                        printToggle = FALSE,
+                        showAllLevels = TRUE,
+                        test = TRUE)
+write.csv(table1_export2, "table1_detailed.csv")
+
+# ============================================================================
+# Part 3: Reverse Analysis (Cancer as Outcome, AD as Predictor)
+# ============================================================================
+
+# Note: This analysis examines whether AD predicts cancer occurrence
+# Cancer types (col_10 to col_39) are now outcome variables
+# AD_bin is the predictor variable
+
+# Create empty results dataframe
+results_reverse <- data.frame(
+  cancer_type = character(),
+  estimate = numeric(),
+  std_error = numeric(),
+  statistic = numeric(),
+  p_value = numeric(),
+  conf_low = numeric(),
+  conf_high = numeric(),
+  OR = numeric(),
+  OR_conf_low = numeric(),
+  OR_conf_high = numeric(),
+  n_total = numeric(),
+  n_events = numeric(),
+  stringsAsFactors = FALSE
+)
+
+# Loop through each cancer type
+for (i in seq_along(cancer_cols)) {
+  
+  cancer_col <- cancer_cols[i]
+  
+  # Check if column exists
+  if (!cancer_col %in% colnames(data1)) {
+    cat("Column", cancer_col, "does not exist, skipping\n")
+    next
+  }
+  
+  # Check if column has variability
+  if (length(unique(data1[[cancer_col]], na.rm = TRUE)) < 2) {
+    cat("Column", cancer_col, "lacks variability, skipping\n")
+    next
+  }
+  
+  # Create regression formula with cancer as outcome
+  formula_simple <- as.formula(paste(cancer_col, "~ AD_bin"))
+  
+  # Adjusted model with confounders
+  if (all(confounders %in% colnames(data1))) {
+    formula_adjusted <- as.formula(paste(cancer_col, "~ AD_bin +", 
+                                        paste(confounders, collapse = " + ")))
+  } else {
+    formula_adjusted <- formula_simple
+    cat("Some confounders not found, using simple model\n")
+  }
+  
+  tryCatch({
+    # Perform logistic regression
+    model <- glm(formula_adjusted, data = data1, family = binomial())
+    
+    # Extract results
+    model_summary <- tidy(model, conf.int = TRUE)
+    
+    # Find the row for AD_bin variable
+    ad_row <- model_summary[model_summary$term == "AD_bin", ]
+    
+    if (nrow(ad_row) > 0) {
+      # Calculate OR and confidence intervals
+      or <- exp(ad_row$estimate)
+      or_conf_low <- exp(ad_row$conf.low)
+      or_conf_high <- exp(ad_row$conf.high)
+      
+      # Calculate sample size and number of events
+      complete_data <- data1[complete.cases(data1[c(cancer_col, "AD_bin", confounders)]), ]
+      n_total <- nrow(complete_data)
+      n_events <- sum(complete_data[[cancer_col]], na.rm = TRUE)
+      
+      # Add results to dataframe
+      results_reverse <- rbind(results_reverse, data.frame(
+        cancer_type = cancer_col,
+        estimate = ad_row$estimate,
+        std_error = ad_row$std.error,
+        statistic = ad_row$statistic,
+        p_value = ad_row$p.value,
+        conf_low = ad_row$conf.low,
+        conf_high = ad_row$conf.high,
+        OR = or,
+        OR_conf_low = or_conf_low,
+        OR_conf_high = or_conf_high,
+        n_total = n_total,
+        n_events = n_events,
+        stringsAsFactors = FALSE
+      ))
+      
+      cat("Completed analysis for", cancer_col, "\n")
+    }
+    
+  }, error = function(e) {
+    cat("Error analyzing", cancer_col, ":", e$message, "\n")
+  })
+}
+
+# Apply multiple comparison correction
+results_reverse$p_adjusted <- p.adjust(results_reverse$p_value, method = "bonferroni")
+
+# Add significance markers
+results_reverse$significance <- ifelse(results_reverse$p_adjusted < 0.001, "***",
+                                      ifelse(results_reverse$p_adjusted < 0.01, "**",
+                                             ifelse(results_reverse$p_adjusted < 0.05, "*", "")))
+
+# Save results
+write.csv(results_reverse, "logistic_regression_results_reverse.csv", 
+          row.names = FALSE, fileEncoding = "UTF-8")
+
+# ============================================================================
+# Part 4: Sex-Stratified Analysis
+# ============================================================================
+
+# Remove sex from confounders for stratified analysis
+confounders_stratified <- c("cotinine", "age", "race", "BMI", "education", 
+                           "Poverty_to_income_ratio", "Alcohol_drinking")
+
+# Define stratified analysis function
+stratified_analysis <- function(data_subset, sex_label) {
+  
+  cat("\n========== Starting Analysis for", sex_label, "==========\n")
+  
+  # Create empty results dataframe
+  results <- data.frame(
+    cancer_type = character(),
+    estimate = numeric(),
+    std_error = numeric(),
+    statistic = numeric(),
+    p_value = numeric(),
+    conf_low = numeric(),
+    conf_high = numeric(),
+    OR = numeric(),
+    OR_conf_low = numeric(),
+    OR_conf_high = numeric(),
+    n_total = numeric(),
+    n_events = numeric(),
+    stringsAsFactors = FALSE
+  )
+  
+  # Loop through each cancer type
+  for (i in seq_along(cancer_cols)) {
+    
+    cancer_col <- cancer_cols[i]
+    
+    # Check if column exists
+    if (!cancer_col %in% colnames(data_subset)) {
+      cat("Column", cancer_col, "does not exist, skipping\n")
+      next
+    }
+    
+    # Check variability
+    if (length(unique(data_subset[[cancer_col]], na.rm = TRUE)) < 2) {
+      cat("Column", cancer_col, "lacks variability, skipping\n")
+      next
+    }
+    
+    # Create regression formula
+    formula_simple <- as.formula(paste(cancer_col, "~ AD_bin"))
+    
+    # Adjusted model
+    if (all(confounders_stratified %in% colnames(data_subset))) {
+      formula_adjusted <- as.formula(paste(cancer_col, "~ AD_bin +", 
+                                          paste(confounders_stratified, collapse = " + ")))
+    } else {
+      formula_adjusted <- formula_simple
+      cat("Some confounders not found, using simple model\n")
+    }
+    
+    tryCatch({
+      # Perform logistic regression
+      model <- glm(formula_adjusted, data = data_subset, family = binomial())
+      
+      # Extract results
+      model_summary <- tidy(model, conf.int = TRUE)
+      
+      # Find AD_bin row
+      ad_row <- model_summary[model_summary$term == "AD_bin", ]
+      
+      if (nrow(ad_row) > 0) {
+        # Calculate OR and CI
+        or <- exp(ad_row$estimate)
+        or_conf_low <- exp(ad_row$conf.low)
+        or_conf_high <- exp(ad_row$conf.high)
+        
+        # Calculate sample size and events
+        complete_data <- data_subset[complete.cases(data_subset[c(cancer_col, "AD_bin", 
+                                                                   confounders_stratified)]), ]
+        n_total <- nrow(complete_data)
+        n_events <- sum(complete_data[[cancer_col]], na.rm = TRUE)
+        
+        # Add results
+        results <- rbind(results, data.frame(
+          cancer_type = cancer_col,
+          estimate = ad_row$estimate,
+          std_error = ad_row$std.error,
+          statistic = ad_row$statistic,
+          p_value = ad_row$p.value,
+          conf_low = ad_row$conf.low,
+          conf_high = ad_row$conf.high,
+          OR = or,
+          OR_conf_low = or_conf_low,
+          OR_conf_high = or_conf_high,
+          n_total = n_total,
+          n_events = n_events,
+          stringsAsFactors = FALSE
+        ))
+        
+        cat("Completed", cancer_col, "analysis\n")
+      }
+      
+    }, error = function(e) {
+      cat("Error analyzing", cancer_col, ":", e$message, "\n")
+    })
+  }
+  
+  # Apply multiple comparison correction
+  results$p_adjusted <- p.adjust(results$p_value, method = "bonferroni")
+  
+  # Add significance markers
+  results$significance <- ifelse(results$p_adjusted < 0.001, "***",
+                                ifelse(results$p_adjusted < 0.01, "**",
+                                       ifelse(results$p_adjusted < 0.05, "*", "")))
+  
+  # Format results
+  results_formatted <- results %>%
+    mutate(
+      OR_CI = paste0(sprintf("%.3f", OR), " (", 
+                     sprintf("%.3f", OR_conf_low), "-", 
+                     sprintf("%.3f", OR_conf_high), ")"),
+      p_formatted = ifelse(p_value < 0.001, "<0.001", sprintf("%.3f", p_value)),
+      p_adj_formatted = ifelse(p_adjusted < 0.001, "<0.001", sprintf("%.3f", p_adjusted))
+    ) %>%
+    select(cancer_type, n_total, n_events, OR_CI, p_formatted, p_adj_formatted, significance)
+  
+  # Rename columns
+  colnames(results_formatted) <- c("Cancer_Type", "Total_N", "Events_N", "OR_95CI", 
+                                   "P_Value", "Adjusted_P", "Significance")
+  
+  # Display results
+  cat("\n", sex_label, "Logistic Regression Results:\n")
+  print(results_formatted)
+  
+  # Save results
+  write.csv(results, paste0("logistic_regression_results_", sex_label, ".csv"), 
+            row.names = FALSE, fileEncoding = "UTF-8")
+  write.csv(results_formatted, paste0("logistic_regression_results_formatted_", sex_label, ".csv"), 
+            row.names = FALSE, fileEncoding = "UTF-8")
+  
+  # Display summary
+  cat("\n", sex_label, "Summary of Significant Results:\n")
+  cat("Significant cancer types (p < 0.05):", sum(results$p_adjusted < 0.05), "\n")
+  cat("Highly significant cancer types (p < 0.01):", sum(results$p_adjusted < 0.01), "\n")
+  
+  # Display significant cancers
+  significant_cancers <- results[results$p_adjusted < 0.05, ]
+  if (nrow(significant_cancers) > 0) {
+    cat("\n", sex_label, "Significant Cancer Types:\n")
+    print(significant_cancers[, c("cancer_type", "OR", "p_adjusted")])
+  }
+  
+  return(results)
+}
+
+# Perform stratified analysis
+# Male analysis
+male_data <- data1[data1$sex == "Male", ]
+cat("Male sample size:", nrow(male_data), "\n")
+results_male <- stratified_analysis(male_data, "Male")
+
+# Female analysis
+female_data <- data1[data1$sex == "Female", ]
+cat("Female sample size:", nrow(female_data), "\n")
+results_female <- stratified_analysis(female_data, "Female")
+
+# Combine results for comparison
+results_male$sex <- "Male"
+results_female$sex <- "Female"
+results_combined <- rbind(results_male, results_female)
+
+# Save combined results
+write.csv(results_combined, "logistic_regression_results_sex_stratified_combined.csv", 
+          row.names = FALSE, fileEncoding = "UTF-8")
+
+cat("\n========== Analysis Complete ==========\n")
+cat("Generated files:\n")
+cat("1. logistic_regression_results_Male.csv (Male detailed results)\n")
+cat("2. logistic_regression_results_formatted_Male.csv (Male formatted results)\n")
+cat("3. logistic_regression_results_Female.csv (Female detailed results)\n")
+cat("4. logistic_regression_results_formatted_Female.csv (Female formatted results)\n")
+cat("5. logistic_regression_results_sex_stratified_combined.csv (Combined results)\n")
+
+# ============================================================================
+# Part 5: Post-processing Excel Files
+# ============================================================================
+
+# Function to round numeric columns to 3 decimal places
+round_numeric_columns <- function(df) {
+  # Iterate through each column
+  for (col in names(df)) {
+    # If character type, try to convert to numeric
+    if (is.character(df[[col]])) {
+      # Attempt conversion to numeric
+      numeric_col <- suppressWarnings(as.numeric(df[[col]]))
+      # If conversion successful (not all NA), use converted result
+      if (!all(is.na(numeric_col))) {
+        df[[col]] <- numeric_col
+        cat("  - Column", col, "converted from character to numeric\n")
+      }
+    }
+    
+    # If column is numeric, round to 3 decimal places
+    if (is.numeric(df[[col]])) {
+      df[[col]] <- round(df[[col]], 3)
+    }
+  }
+  return(df)
+}
+
+# Define Excel file names to process
+file_names <- c("all.xlsx", "male.xlsx", "female.xlsx")
+
+# Process each file
+for (file_name in file_names) {
+  # Check if file exists
+  if (file.exists(file_name)) {
+    cat("Processing:", file_name, "\n")
+    
+    # Read Excel file
+    data <- read_excel(file_name)
+    
+    # Save to corresponding variable (remove .xlsx extension)
+    var_name <- sub(".xlsx", "", file_name)
+    assign(var_name, data, envir = .GlobalEnv)
+    
+    # Process numeric columns, round to 3 decimal places
+    data_rounded <- round_numeric_columns(data)
+    
+    # Save back to original file
+    write_xlsx(data_rounded, file_name)
+    
+    cat("Completed processing:", file_name, "\n\n")
+  } else {
+    cat("File does not exist:", file_name, "\n\n")
+  }
+}
+
+# Display loaded dataset information
+cat("Datasets loaded into environment:\n")
+if (exists("all")) cat("- all:", nrow(all), "rows x", ncol(all), "columns\n")
+if (exists("male")) cat("- male:", nrow(male), "rows x", ncol(male), "columns\n")
+if (exists("female")) cat("- female:", nrow(female), "rows x", ncol(female), "columns\n")
+
+# ============================================================================
+# End of Script
+# ============================================================================
