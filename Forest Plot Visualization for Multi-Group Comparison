@@ -1,0 +1,290 @@
+# ============================================================================
+# Forest Plot Visualization for Multi-Group Comparison
+# ============================================================================
+# 
+# Description:
+#   This script creates publication-ready forest plots to visualize 
+#   odds ratios (OR) or hazard ratios (HR) with 95% confidence intervals
+#   across multiple groups or subgroups. The script supports:
+#   - Multi-group comparisons (up to 4 groups)
+#   - Customizable plot themes and colors
+#   - Interaction p-value display
+#   - Automatic indentation for subgroups
+#   - Reference line at OR/HR = 1
+#
+# Author: Wu Zhengdong
+# Date: 2025
+# 
+# Data Requirements:
+#   - Input file: Excel format (.xlsx)
+#   - Required columns:
+#     * col_1: Variable names (categories/subcategories)
+#     * V1, V2, V3, V4: Group labels
+#     * V1_part1, V2_part1, V3_part1, V4_part1: Point estimates
+#     * V1_part2, V2_part2, V3_part2, V4_part2: Lower confidence limits
+#     * V1_part3, V2_part3, V3_part3, V4_part3: Upper confidence limits
+#     * p_interaction: P-value for interaction (optional)
+#
+# Output:
+#   - Forest plot with customizable appearance
+#   - Multiple groups displayed side by side
+#   - Color-coded confidence intervals
+#
+# Dependencies:
+#   - forestploter: For creating forest plots
+#   - openxlsx: For reading Excel files
+#   - grid: For graphics parameters
+# ============================================================================
+
+# Set working directory
+setwd("D:/R work")
+
+# Clear workspace
+rm(list = ls())
+
+# Load required packages
+library(forestploter)
+library(openxlsx)
+library(grid)
+
+# ============================================================================
+# Part 1: Four-Group Forest Plot
+# ============================================================================
+
+# Read data from Excel file
+dt <- read.xlsx("副本画图总表.xlsx") 
+View(dt)
+
+# Set indentation for subcategories
+# Categories with p_interaction values are main headers (no indent)
+# Subcategories are indented with 3 spaces
+dt$col_1 <- ifelse(!is.na(dt$p_interaction),
+                   dt$col_1,
+                   paste0("   ", dt$col_1))
+View(dt)
+
+# Add blank columns to provide space for forest plot display
+# Four columns for four groups
+dt$Forest1 <- paste(rep(" ", 20), collapse = " ")
+dt$Forest2 <- paste(rep(" ", 20), collapse = " ")
+dt$Forest3 <- paste(rep(" ", 20), collapse = " ")
+dt$Forest4 <- paste(rep(" ", 20), collapse = " ")
+View(dt)
+
+# Replace NA values in p_interaction column with blank space
+dt$p_interaction[is.na(dt$p_interaction)] <- " "
+View(dt)
+
+# Display column names with index numbers
+# Important: Remember these indices for correct column selection in plotting
+cbind(colnames(dt))
+# Column structure:
+# [1,] "col_1"         - Variable names
+# [2,] "V1"            - Group 1 label
+# [3,] "V1_part1"      - Group 1 point estimate
+# [4,] "V1_part2"      - Group 1 lower CI
+# [5,] "V1_part3"      - Group 1 upper CI
+# [6,] "V2"            - Group 2 label
+# [7,] "V2_part1"      - Group 2 point estimate
+# [8,] "V2_part2"      - Group 2 lower CI
+# [9,] "V2_part3"      - Group 2 upper CI
+# [10,] "p_interaction" - Interaction p-value
+# [11,] "Forest1"       - Space for forest plot 1
+# [12,] "Forest2"       - Space for forest plot 2
+# [13,] "Forest3"       - Space for forest plot 3
+# [14,] "Forest4"       - Space for forest plot 4
+
+head(dt)
+
+# Convert point estimates and CI bounds to numeric format
+# Adjust column indices based on your actual data structure
+dt[c(3:5, 7:9, 12:14, 16:18)] <- sapply(dt[c(3:5, 7:9, 12:14, 16:18)], as.numeric)
+
+# Set forest plot theme
+tm <- forest_theme(base_size = 10,                # Base font size
+                   refline_col = "red",           # Reference line color
+                   footnote_col = "#636363",      # Footnote color
+                   footnote_fontface = "italic")  # Footnote font style
+
+# Create forest plot with four groups
+p <- forest(dt[, c(1, 2, 19, 6, 20, 11, 21, 15, 22, 10)],  # Data columns (reordered)
+            est = list(dt$V1_part1,               # Point estimates for each group
+                       dt$V2_part1,
+                       dt$V3_part1, 
+                       dt$V4_part1),
+            lower = list(dt$V1_part2,             # Lower CI bounds
+                         dt$V2_part2,
+                         dt$V3_part2, 
+                         dt$V4_part2),
+            upper = list(dt$V1_part3,             # Upper CI bounds
+                         dt$V2_part3,
+                         dt$V3_part3,
+                         dt$V4_part3),
+            sizes = 0.75,                         # Font size multiplier
+            ci_column = c(3, 5, 7, 9),            # Column indices for CI display
+            ref_line = 1,                         # Reference line at OR/HR = 1
+            arrow_lab = c("Protective", "Risk"),  # Arrow labels
+            xlim = c(0, 5),                       # X-axis range
+            ticks_at = c(0, 1, 2, 3, 4, 5),       # X-axis tick positions
+            theme = tm)                           # Apply theme
+p
+
+# Identify header rows (rows with p_interaction values)
+rows <- which(dt$p_interaction != " ")
+rows
+
+# Edit plot: Make header text bold
+p <- edit_plot(p,
+               row = rows,
+               gp = gpar(fontface = "bold"))        
+p
+
+# Edit plot: Add background color to header rows
+p <- edit_plot(p, 
+               row = rows, 
+               which = "background",
+               gp = gpar(fill = "grey80"))        
+plot(p)
+
+# Edit plot: Color confidence intervals for specific rows
+p <- edit_plot(p,
+               row = c(8:12, 20:24),              # Adjust row numbers as needed
+               col = c(3, 5, 7, 9),               # Columns containing CIs
+               which = "ci", 
+               gp = gpar(col = "darkred"))        # CI color
+
+# Insert additional text annotations (optional)
+p <- insert_text(p,
+                 text = c("", "", "", ""),         # Text to insert
+                 row = c(7, 13, 19, 25),           # Row positions
+                 just = "left",                    # Text justification
+                 gp = gpar(cex = 0.6,              # Text size
+                          col = "red",             # Text color
+                          fontface = "italic"))    # Text style
+
+# Display final plot
+plot(p)
+
+# ============================================================================
+# Part 2: Three-Group Forest Plot (Alternative Version)
+# ============================================================================
+
+# Clear workspace for new analysis
+setwd("D:/R work")
+rm(list = ls())
+
+# Load required packages
+library(forestploter)
+library(openxlsx)
+library(grid)
+
+# Read data
+dt <- read.xlsx("副本画图总表.xlsx") 
+View(dt)
+
+# Set indentation for subcategories
+dt$col_1 <- ifelse(!is.na(dt$p_interaction),
+                   dt$col_1,
+                   paste0("   ", dt$col_1))
+View(dt)
+
+# Add blank columns for three groups only
+dt$Forest1 <- paste(rep(" ", 20), collapse = " ")
+dt$Forest2 <- paste(rep(" ", 20), collapse = " ")
+dt$Forest3 <- paste(rep(" ", 20), collapse = " ")
+View(dt)
+
+# Replace NA values in p_interaction
+dt$p_interaction[is.na(dt$p_interaction)] <- " "
+View(dt)
+
+# Display column names and indices
+cbind(colnames(dt))
+
+head(dt)
+
+# Convert to numeric (three groups only)
+dt[c(3:5, 7:9, 12:14)] <- sapply(dt[c(3:5, 7:9, 12:14)], as.numeric)
+
+# Set theme
+tm <- forest_theme(base_size = 10,                # Base font size
+                   refline_col = "red",           # Reference line color
+                   footnote_col = "#636363",      # Footnote color
+                   footnote_fontface = "italic")  # Footnote font style
+
+# Create forest plot with three groups
+p <- forest(dt[, c(1, 2, 19, 6, 20, 11, 21, 10)],  # Data columns (three groups)
+            est = list(dt$V1_part1,                # Point estimates
+                       dt$V2_part1,
+                       dt$V3_part1),
+            lower = list(dt$V1_part2,              # Lower CI bounds
+                         dt$V2_part2,
+                         dt$V3_part2),
+            upper = list(dt$V1_part3,              # Upper CI bounds
+                         dt$V2_part3,
+                         dt$V3_part3),
+            sizes = 0.75,                          # Font size multiplier
+            ci_column = c(3, 5, 7),                # CI columns for three groups
+            ref_line = 1,                          # Reference line
+            arrow_lab = c("Protective", "Risk"),   # Arrow labels
+            xlim = c(0, 5),                        # X-axis range
+            ticks_at = c(0, 1, 2, 3, 4, 5),        # X-axis ticks
+            theme = tm)                            # Theme
+p
+
+# Identify header rows
+rows <- which(dt$p_interaction != " ")
+rows
+
+# Make header text bold
+p <- edit_plot(p,
+               row = rows,
+               gp = gpar(fontface = "bold"))        
+p
+
+# Add background color to headers
+p <- edit_plot(p, 
+               row = rows, 
+               which = "background",
+               gp = gpar(fill = "grey80"))        
+plot(p)
+
+# Color confidence intervals (three groups)
+p <- edit_plot(p,
+               row = c(8:12, 20:24),               # Adjust based on data
+               col = c(3, 5, 7),                   # Three group columns
+               which = "ci", 
+               gp = gpar(col = "darkred"))
+
+# Insert text annotations (three groups)
+p <- insert_text(p,
+                 text = c("", "", ""),              # Three text elements
+                 row = c(7, 13, 19),                # Adjust based on data
+                 just = "left",
+                 gp = gpar(cex = 0.6, 
+                          col = "red", 
+                          fontface = "italic"))
+
+# Display final plot
+plot(p)
+
+# ============================================================================
+# Additional Notes
+# ============================================================================
+# 
+# Customization Tips:
+# 1. Adjust xlim and ticks_at for different OR/HR ranges
+# 2. Change ref_line value if using a different reference point
+# 3. Modify arrow_lab for different interpretations
+# 4. Update row numbers in edit_plot() based on your data structure
+# 5. Change colors in gpar() for different visual themes
+#
+# Common Issues:
+# - Ensure column indices match your data structure
+# - Verify numeric conversion succeeded for estimates and CIs
+# - Check that row numbers align with actual data rows
+# - Confirm p_interaction column exists if using header formatting
+#
+# ============================================================================
+# End of Script
+# ============================================================================
