@@ -1,0 +1,276 @@
+# ============================================================================
+# Differential Gene Expression Analysis and Visualization
+# ============================================================================
+# 
+# Description:
+#   This script performs comprehensive analysis and visualization of gene
+#   expression data comparing normal tissue and disease samples. Features:
+#   - Data preprocessing and format conversion
+#   - Z-score normalization for cross-gene comparison
+#   - Statistical testing (t-test) between groups
+#   - Publication-quality boxplot generation
+#   - Automatic significance annotation
+#
+# Author: Wu Zhengdong
+# Date: 2025
+# 
+# Data Requirements:
+#   - Input file: Excel format (.xlsx)
+#   - Required columns:
+#     * sample: Sample identifiers
+#     * Gene columns: Expression values for each gene
+#   - Sample naming convention:
+#     * Samples starting with "GTEX" = Normal tissue
+#     * Other samples = Cervical cancer tissue
+#
+# Output Files:
+#   - gene_expression_zscore.png (High-resolution raster image, 300 dpi)
+#   - gene_expression_zscore.pdf (Vector graphics for publication)
+#
+# Statistical Methods:
+#   - Z-score normalization: (x - mean) / SD for each gene
+#   - Two-sample t-test for group comparison
+#   - Significance levels: **** p≤0.0001, *** p≤0.001, ** p≤0.01, * p≤0.05
+#
+# Dependencies:
+#   - ggpubr: For publication-ready plots
+#   - dplyr: For data manipulation
+#   - tidyr: For data reshaping
+#   - readxl: For reading Excel files
+#   - rstatix: For statistical tests
+# ============================================================================
+
+# Load required packages
+library(ggpubr)
+library(dplyr)
+library(tidyr)
+library(readxl)
+library(rstatix)
+
+# ============================================================================
+# Part 1: Data Loading and Preprocessing
+# ============================================================================
+
+# Read gene expression data from Excel file
+data <- read_excel("expr_filtered_matched_final.xlsx")
+
+# Convert data from wide format to long format
+# Wide format: each gene is a column
+# Long format: Gene names in one column, Expression values in another
+data_long <- data %>%
+  pivot_longer(cols = -sample,                    # Keep sample column
+               names_to = "Gene",                 # Gene names column
+               values_to = "Expression")          # Expression values column
+
+# Assign group labels based on sample naming convention
+# Samples starting with "GTEX" are normal tissue
+# Other samples are cervical cancer tissue
+data_long$Group <- ifelse(grepl("^GTEX", data_long$sample), 
+                          "Normal", 
+                          "Cervical cancer")
+
+# ============================================================================
+# Part 2: Z-score Normalization
+# ============================================================================
+
+# Apply Z-score normalization for each gene
+# Z-score = (x - mean) / standard deviation
+# This standardization allows comparison across genes with different scales
+data_long_zscore <- data_long %>%
+  group_by(Gene) %>%                              # Group by gene
+  mutate(Expression_zscore = scale(Expression)[,1]) %>%  # Calculate Z-score
+  ungroup()
+
+# ============================================================================
+# Part 3: Statistical Testing
+# ============================================================================
+
+# Perform two-sample t-test for each gene
+# Test hypothesis: Expression differs between Normal and Cervical cancer
+stat_test <- data_long %>%
+  group_by(Gene) %>%                              # Test each gene separately
+  t_test(Expression ~ Group) %>%                  # T-test comparing groups
+  mutate(p.signif = case_when(                    # Convert p-values to symbols
+    p <= 0.0001 ~ "****",                         # Extremely significant
+    p <= 0.001 ~ "***",                           # Highly significant
+    p <= 0.01 ~ "**",                             # Very significant
+    p <= 0.05 ~ "*",                              # Significant
+    TRUE ~ "ns"                                   # Not significant
+  ))
+
+# Display statistical test results
+print("Statistical Test Results:")
+print(stat_test)
+
+# ============================================================================
+# Part 4: Visualization - Boxplot with Statistical Annotations
+# ============================================================================
+
+# Create publication-quality boxplot
+plot <- ggboxplot(data_long_zscore,
+                  x = "Gene",                     # X-axis: Gene names
+                  y = "Expression_zscore",        # Y-axis: Z-score values
+                  color = "Group",                # Color by group
+                  palette = c("Cervical cancer" = "#d95f02",  # Orange for cancer
+                             "Normal" = "#56B4E9"),           # Blue for normal
+                  fill = "Group",                 # Fill boxes by group
+                  alpha = 0.3,                    # Semi-transparent fill
+                  width = 0.6,                    # Box width
+                  outlier.shape = NA,             # Hide outlier points
+                  size = 0.8                      # Box border thickness
+) +
+  # Add significance asterisks above boxes
+  stat_compare_means(aes(group = Group), 
+                     method = "t.test",           # Use t-test
+                     label = "p.signif",          # Show significance symbols
+                     tip.length = 0,              # No bracket tips
+                     bracket.size = 0,            # No bracket lines
+                     size = 4,                    # Text size
+                     vjust = 0.5                  # Vertical adjustment
+  ) +
+  # Add horizontal reference line at Z-score = 0 (mean expression)
+  geom_hline(yintercept = 0,                      # Position at zero
+             linetype = "dashed",                 # Dashed line style
+             color = "grey40",                    # Grey color
+             size = 0.5,                          # Line thickness
+             alpha = 0.7) +                       # Semi-transparent
+  # Add plot labels and titles
+  labs(title = "Differential Gene Expression (Z-score Normalized)",
+       subtitle = "Comparison between Normal and Cervical cancer",
+       x = "Gene",
+       y = "Z-score of Gene Expression",
+       caption = "Z-score = (x - mean) / SD for each gene") +
+  # Customize plot theme
+  theme_minimal() +
+  theme(
+    # Axis styling
+    axis.line = element_line(color = "black", size = 0.8),     # Black axis lines
+    axis.ticks = element_line(color = "black", size = 0.5),    # Black tick marks
+    axis.text.x = element_text(angle = 45,                     # Rotate gene names 45°
+                               hjust = 1,                       # Right-align
+                               size = 11,                       # Font size
+                               face = "bold"),                  # Bold font
+    axis.text.y = element_text(size = 10),                     # Y-axis text size
+    axis.title = element_text(size = 12, face = "bold"),       # Axis titles bold
+    
+    # Grid lines
+    panel.grid.major.y = element_line(color = "grey90",        # Horizontal grid
+                                      size = 0.3),
+    panel.grid.major.x = element_blank(),                      # No vertical grid
+    panel.grid.minor = element_blank(),                        # No minor grid
+    
+    # Title formatting
+    plot.title = element_text(hjust = 0.5,                     # Center title
+                             size = 14, 
+                             face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5,                  # Center subtitle
+                                size = 11, 
+                                color = "grey40"),
+    plot.caption = element_text(size = 9,                      # Caption styling
+                               color = "grey50", 
+                               hjust = 1),
+    
+    # Legend styling
+    legend.position = "right",                                 # Legend on right
+    legend.title = element_text(size = 11, face = "bold"),     # Legend title bold
+    legend.text = element_text(size = 10),                     # Legend text size
+    legend.background = element_rect(fill = "white",           # White background
+                                    color = "grey80"),         # Grey border
+    
+    # Background colors
+    panel.background = element_rect(fill = "white"),           # White panel
+    plot.background = element_rect(fill = "white")             # White background
+  )
+
+# Display the plot
+print(plot)
+
+# ============================================================================
+# Part 5: Export High-Quality Figures
+# ============================================================================
+
+# Save as high-resolution PNG (for presentations and web)
+ggsave("gene_expression_zscore.png", 
+       plot = plot,
+       width = 12,                                # Width in inches
+       height = 6,                                # Height in inches
+       dpi = 300,                                 # Resolution: 300 dots per inch
+       bg = "white")                              # White background
+
+# Save as PDF vector graphics (for publications)
+ggsave("gene_expression_zscore.pdf", 
+       plot = plot,
+       width = 12,                                # Width in inches
+       height = 6)                                # Height in inches
+
+cat("\n========== Analysis Complete ==========\n")
+cat("Generated files:\n")
+cat("1. gene_expression_zscore.png (High-resolution raster, 300 dpi)\n")
+cat("2. gene_expression_zscore.pdf (Vector graphics for publication)\n")
+cat("\nStatistical summary saved in 'stat_test' object\n")
+
+# ============================================================================
+# Part 6: Additional Statistical Summary
+# ============================================================================
+
+# Calculate summary statistics by gene and group
+summary_stats <- data_long_zscore %>%
+  group_by(Gene, Group) %>%
+  summarise(
+    n = n(),                                      # Sample size
+    mean = mean(Expression_zscore),               # Mean Z-score
+    sd = sd(Expression_zscore),                   # Standard deviation
+    median = median(Expression_zscore),           # Median Z-score
+    q25 = quantile(Expression_zscore, 0.25),     # 25th percentile
+    q75 = quantile(Expression_zscore, 0.75),     # 75th percentile
+    .groups = 'drop'
+  )
+
+# Display summary statistics
+print("\nSummary Statistics by Gene and Group:")
+print(summary_stats)
+
+# Save summary statistics to CSV
+write.csv(summary_stats, 
+          "gene_expression_summary_stats.csv", 
+          row.names = FALSE)
+
+# Save statistical test results to CSV
+write.csv(stat_test, 
+          "gene_expression_ttest_results.csv", 
+          row.names = FALSE)
+
+cat("\nAdditional output files:\n")
+cat("3. gene_expression_summary_stats.csv (Descriptive statistics)\n")
+cat("4. gene_expression_ttest_results.csv (T-test results)\n")
+
+# ============================================================================
+# Additional Notes
+# ============================================================================
+# 
+# Interpretation Guide:
+# - Z-score > 0: Expression above gene's mean
+# - Z-score < 0: Expression below gene's mean
+# - Z-score = 0: Expression at gene's mean (reference line)
+# 
+# Significance Levels:
+# - ****: p ≤ 0.0001 (extremely significant)
+# - ***:  p ≤ 0.001  (highly significant)
+# - **:   p ≤ 0.01   (very significant)
+# - *:    p ≤ 0.05   (significant)
+# - ns:   p > 0.05   (not significant)
+#
+# Color Scheme:
+# - Orange (#d95f02): Cervical cancer samples
+# - Blue (#56B4E9): Normal tissue samples
+#
+# Customization Tips:
+# 1. Adjust color palette in 'palette' parameter
+# 2. Modify plot dimensions in ggsave() for different layouts
+# 3. Change alpha value for different transparency levels
+# 4. Adjust vjust in stat_compare_means() for label positioning
+# 5. Modify angle in axis.text.x for different gene name orientations
+#
+# ============================================================================
+# End of Script
+# ============================================================================
